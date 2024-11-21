@@ -69,7 +69,7 @@ bool AntiDebug::scanTaskStatuses() {
                 }
 
                 char statusPath[512];
-                sprintf(statusPath, AY_OBFUSCATE("/proc/self/task/%s/status").operator char *(), dirp->d_name);
+                sprintf(statusPath, AY_OBFUSCATE("/proc/self/task/%s/status"), dirp->d_name);
                 int statusFd = SecureAPI::openat(AT_FDCWD, statusPath, O_RDONLY, 0);
                 LOGI("AntiDebug::scanTaskStatuses statusPath: %s | statusFd: %d", statusPath, statusFd);
                 if (statusFd == -1) {

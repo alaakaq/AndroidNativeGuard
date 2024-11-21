@@ -38,8 +38,8 @@ AntiDump::AntiDump(void (*callback)()) : onDumpDetected(callback) {
             }
             if (dirp->d_type == DT_DIR) {
                 char memPath[512], pagemapPath[512];
-                sprintf(memPath, AY_OBFUSCATE("/proc/self/task/%s/mem").operator char *(), dirp->d_name);
-                sprintf(pagemapPath, AY_OBFUSCATE("/proc/self/task/%s/pagemap").operator char *(), dirp->d_name);
+                sprintf(memPath, AY_OBFUSCATE("/proc/self/task/%s/mem"), dirp->d_name);
+                sprintf(pagemapPath, AY_OBFUSCATE("/proc/self/task/%s/pagemap"), dirp->d_name);
 
                 this->m_wd[this->m_count++] = SecureAPI::inotify_add_watch(this->m_fd, memPath, IN_ACCESS | IN_OPEN);
                 this->m_wd[this->m_count++] = SecureAPI::inotify_add_watch(this->m_fd, pagemapPath, IN_ACCESS | IN_OPEN);

@@ -81,7 +81,7 @@ bool FridaDetect::detectFridaPipe() {
                 }
 
                 char linkPath[512];
-                sprintf(linkPath, AY_OBFUSCATE("/proc/self/fd/%s").operator char *(), dirp->d_name);
+                sprintf(linkPath, AY_OBFUSCATE("/proc/self/fd/%s"), dirp->d_name);
                 char linkTarget[512];
                 int linkTargetLen = SecureAPI::readlinkat(fd, dirp->d_name, linkTarget, sizeof(linkTarget));
                 if (linkTargetLen == -1) {
@@ -130,7 +130,7 @@ bool FridaDetect::detectFridaListener() {
         }
 
         char req[1024];
-        sprintf(req, AY_OBFUSCATE("GET /ws HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: CpxD2C5REVLHvsUC9YAoqg==\r\nSec-WebSocket-Version: 13\r\nHost: %s:%d\r\nUser-Agent: Frida/16.1.7\r\n\r\n").operator char *(), inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
+        sprintf(req, AY_OBFUSCATE("GET /ws HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: CpxD2C5REVLHvsUC9YAoqg==\r\nSec-WebSocket-Version: 13\r\nHost: %s:%d\r\nUser-Agent: Frida/16.1.7\r\n\r\n"), inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
         SecureAPI::write(fd, req, SecureAPI::strlen(req));
 
         char res[1024];

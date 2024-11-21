@@ -24,8 +24,8 @@
 
 static std::vector<std::string> blacklists {
     // Add your library here incase you don't want a certain library to be detected when it's tampered
-    AY_OBFUSCATE("libclang_rt.ubsan_standalone-aarch64-android.so").operator char *(),
-    AY_OBFUSCATE("libart.so").operator char *()
+    AY_OBFUSCATE("libclang_rt.ubsan_standalone-aarch64-android.so"),
+    AY_OBFUSCATE("libart.so")
 };
 
 __attribute__((always_inline)) static inline uint32_t crc32(uint8_t *data, size_t size) {

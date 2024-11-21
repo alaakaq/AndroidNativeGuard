@@ -56,17 +56,17 @@ eSeverity RiGisk::getSeverity() {
 bool RiGisk::execute() {
     LOGI("RiGisk::execute");
 
-    SandHook::ElfImg linker(AY_OBFUSCATE("/linker").operator char *());
-    solist = getStaticPointer<soinfo>(linker, AY_OBFUSCATE("__dl__ZL6solist").operator char *());
-    somain = getStaticPointer<soinfo>(linker, AY_OBFUSCATE("__dl__ZL6somain").operator char *());
-    preloads = reinterpret_cast<std::vector<soinfo *> *>(linker.getSymbAddress(AY_OBFUSCATE("__dl__ZL13g_ld_preloads").operator char *()));
+    SandHook::ElfImg linker(AY_OBFUSCATE("/linker"));
+    solist = getStaticPointer<soinfo>(linker, AY_OBFUSCATE("__dl__ZL6solist"));
+    somain = getStaticPointer<soinfo>(linker, AY_OBFUSCATE("__dl__ZL6somain"));
+    preloads = reinterpret_cast<std::vector<soinfo *> *>(linker.getSymbAddress(AY_OBFUSCATE("__dl__ZL13g_ld_preloads")));
     LOGI("RiGisk::execute solist: %p, somain: %p, preloads: %p", solist, somain, preloads);
 
-    soinfo::get_realpath_sym = reinterpret_cast<decltype(soinfo::get_realpath_sym)>(linker.getSymbAddress(AY_OBFUSCATE("__dl__ZNK6soinfo12get_realpathEv").operator char *()));
-    soinfo::get_soname_sym = reinterpret_cast<decltype(soinfo::get_soname_sym)>(linker.getSymbAddress(AY_OBFUSCATE("__dl__ZNK6soinfo10get_sonameEv").operator char *()));
+    soinfo::get_realpath_sym = reinterpret_cast<decltype(soinfo::get_realpath_sym)>(linker.getSymbAddress(AY_OBFUSCATE("__dl__ZNK6soinfo12get_realpathEv")));
+    soinfo::get_soname_sym = reinterpret_cast<decltype(soinfo::get_soname_sym)>(linker.getSymbAddress(AY_OBFUSCATE("__dl__ZNK6soinfo10get_sonameEv")));
     LOGI("RiGisk::execute get_realpath_sym: %p, get_soname_sym: %p", soinfo::get_realpath_sym, soinfo::get_soname_sym);
 
-    auto vsdo = getStaticPointer<soinfo>(linker, AY_OBFUSCATE("__dl__ZL4vdso").operator char *());
+    auto vsdo = getStaticPointer<soinfo>(linker, AY_OBFUSCATE("__dl__ZL4vdso"));
     LOGI("RiGisk::execute vsdo: %p", vsdo);
     for (size_t i = 0; i < 1024 / sizeof(void *); i++) {
         auto *possible_next = *(void **) ((uintptr_t) solist + i * sizeof(void *));
