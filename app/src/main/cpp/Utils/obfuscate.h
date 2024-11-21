@@ -156,6 +156,11 @@ namespace ay {
             return m_data;
         }
 
+        operator std::string_view() {
+            decrypt();
+            return m_data;
+        }
+
         // Returns a pointer to the plain text string, decrypting it if
         // necessary
         operator CHAR_TYPE *() {

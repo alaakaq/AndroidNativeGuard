@@ -1,11 +1,11 @@
-#include <stdio.h>
+#include <cstdio>
 #include <unistd.h>
 #include <pthread.h>
 
 #include <iostream>
 #include <string>
 #include <vector>
-#include <time.h>
+#include <ctime>
 #include <thread>
 
 #include <jni.h>
@@ -25,9 +25,9 @@ jclass mainActivityClass;
 jmethodID addLogMethod;
 void addLog(std::string log) {
     JNIEnv *env;
-    g_VM->AttachCurrentThread(&env, NULL);
+    g_VM->AttachCurrentThread(&env, nullptr);
 
-    time_t now = time(0);
+    time_t now = time(nullptr);
     tm *ltm = localtime(&now);
 
     char date[20];
@@ -53,9 +53,9 @@ void onDumpDetected() {
     addLog("<span style='color: green;'>AntiDump</span>: <span style='color: red'>An attempt to access/dump memory detected.</span>");
 }
 
-void onLibTampered(const char *name, const char *section, uint32_t old_checksum, uint32_t new_checksum) {
+void onLibTampered(const char *libPath, uint32_t old_checksum, uint32_t new_checksum) {
     char log[1024];
-    sprintf(log, "<span style='color: green;'>AntiLibPatch</span>: <span style='color: red'>%s</span> %s has been tampered, 0x%08X -> 0x%08X", name, section, old_checksum, new_checksum);
+    sprintf(log, "<span style='color: green;'>AntiLibPatch</span>: <span style='color: red'>%s</span> has been tampered, 0x%08X -> 0x%08X", libPath, old_checksum, new_checksum);
     addLog(log);
 }
 
@@ -105,6 +105,9 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     addLogMethod = env->GetStaticMethodID(clazz, "addLog", "(Ljava/lang/String;)V");
     mainActivityClass = (jclass)env->NewGlobalRef(clazz);
 
-    AndroidNativeGuard();
+    // execute security initializer in a background thread,
+    // since AntiLibPatch constructor may take a significant time
+    // main thread may become unresponsive
+    std::thread(AndroidNativeGuard).detach();
     return JNI_VERSION_1_6;
 }

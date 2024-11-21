@@ -2,6 +2,8 @@
 #include "SecureAPI.h"
 #include "Log.h"
 #include "obfuscate.h"
+#include "constants.h"
+#include "ElfImg.h"
 
 #include <vector>
 #include <map>
@@ -12,25 +14,15 @@
 #include <link.h>
 #include <dlfcn.h>
 
-#ifdef __LP64__
-#define Elf_Ehdr Elf64_Ehdr
-#define Elf_Shdr Elf64_Shdr
-#define Elf_Sym  Elf64_Sym
-#else
-#define Elf_Ehdr Elf32_Ehdr
-#define Elf_Shdr Elf32_Shdr
-#define Elf_Sym  Elf32_Sym
-#endif
-
-static std::vector<std::string> blacklists {
-    // Add your library here incase you don't want a certain library to be detected when it's tampered
-    AY_OBFUSCATE("libclang_rt.ubsan_standalone-aarch64-android.so"),
-    AY_OBFUSCATE("libart.so")
+static std::vector<std::string> blacklists{
+        // Add your library here incase you don't want a certain library to be detected when it's tampered
+        AY_OBFUSCATE("libclang_rt.ubsan_standalone-aarch64-android.so"),
+        AY_OBFUSCATE("libart.so")
 };
 
-__attribute__((always_inline)) static inline uint32_t crc32(uint8_t *data, size_t size) {
-    uint32_t crc = 0xFFFFFFFF;
-    for (size_t i = 0; i < size; i++) {
+_forceinline static uint32_t crc32(const uint8_t *data, size_t size) {
+    uint32_t    crc = 0xFFFFFFFF;
+    for (size_t i   = 0; i < size; i++) {
         crc ^= data[i];
         for (size_t j = 0; j < 8; j++) {
             crc = (crc >> 1) ^ (0xEDB88320 & (-(crc & 1)));
@@ -39,65 +31,68 @@ __attribute__((always_inline)) static inline uint32_t crc32(uint8_t *data, size_
     return ~crc;
 }
 
-__attribute__((always_inline)) static inline const char *get_filename(const char *path) {
-    for (const char *s = path; *s; s++) {
-        if (*s == '/') {
-            path = s + 1;
-        }
-    }
-    return path;
-}
-
-AntiLibPatch::AntiLibPatch(void (*callback)(const char *name, const char *section, uint32_t old_checksum, uint32_t new_checksum)) : onLibTampered(callback) {
+AntiLibPatch::AntiLibPatch(
+        void (*callback)(const char *libPath,
+                         uint32_t old_checksum,
+                         uint32_t new_checksum)) : onLibTampered(callback) {
     LOGI("AntiLibPatch::AntiLibPatch");
+    SandHook::ElfImg linker(AY_OBFUSCATE("/linker"));
+    ElfW(Addr) soListAddress = linker.getSymbAddress(
+            AY_OBFUSCATE("__dl__ZL6solist"));
 
-    dl_iterate_phdr([](struct dl_phdr_info *info, size_t size, void *data) -> int {
-        if (!strstr(info->dlpi_name, AY_OBFUSCATE(".so"))) {
-            return 0;
-        }
+    if (soListAddress == null) {
+        return;
+    }
 
-        LOGI("AntiLibPatch::AntiLibPatch info->dlpi_name: %s", info->dlpi_name);
-        int fd = SecureAPI::openat(AT_FDCWD, info->dlpi_name, O_RDONLY, 0);
-        if (fd == -1) {
-            return 0;
-        }
+    ElfW(Addr) soInfo = *(ElfW(Addr) *) (soListAddress);
+    while (soInfo != null) {
+        ElfW(Addr) next           = *(ElfW(Addr) *) (soInfo + x32_64(0xA4, 0x28));
+        ElfW(Addr) baseAddress    = *(ElfW(Addr) *) (soInfo + x32_64(0x104, 0xD0));
+        const char *soNameAddress = *(const char **) (soInfo + x32_64(0x108, 0xD8));
+        if (soNameAddress != nullptr) {
+            struct dl_phdr_info info{};
+            info.dlpi_addr  = baseAddress;
+            info.dlpi_name  = soNameAddress;
+            info.dlpi_phdr  = *(const ElfW(Phdr) **) (soInfo + x32_64(0x80, 0x0));
+            info.dlpi_phnum = *(ElfW(Half) *) (soInfo + x32_64(0x84, 0x8));
+            if (info.dlpi_phdr != nullptr) {
+                LOGI("base %zx, libName %s\n", baseAddress, info.dlpi_name);
 
-        Elf_Ehdr ehdr;
-        SecureAPI::read(fd, &ehdr, sizeof(Elf_Ehdr));
-
-        Elf_Shdr shdr;
-        SecureAPI::lseek(fd, ehdr.e_shoff + ehdr.e_shstrndx * sizeof(Elf_Shdr), SEEK_SET);
-        SecureAPI::read(fd, &shdr, sizeof(Elf_Shdr));
-
-        char *shstrtab = new char[shdr.sh_size];
-        SecureAPI::lseek(fd, shdr.sh_offset, SEEK_SET);
-        SecureAPI::read(fd, shstrtab, shdr.sh_size);
-
-        SecureAPI::lseek(fd, ehdr.e_shoff, SEEK_SET);
-        for (int i = 0; i < ehdr.e_shnum; i++) {
-            SecureAPI::read(fd, &shdr, sizeof(Elf_Shdr));
-            const char *name = shstrtab + shdr.sh_name;
-
-            if (shdr.sh_type == SHT_PROGBITS) {
-                if ((shdr.sh_flags & (SHF_EXECINSTR | SHF_ALLOC)) == (SHF_EXECINSTR | SHF_ALLOC)) {
-                    char *tmp = new char[shdr.sh_size];
-                    SecureAPI::lseek(fd, shdr.sh_addr, SEEK_SET);
-                    SecureAPI::read(fd, tmp, shdr.sh_size);
-
-                    uint32_t checksum = crc32((uint8_t *) tmp, shdr.sh_size);
-                    if (checksum != 0x0) {
-                        (*(std::map<std::string, std::map<std::string, uint32_t>> *) data)[info->dlpi_name][name] = checksum;
+                bool      blacklistedLibrary = false;
+                for (auto &blacklistedName: blacklists) {
+                    if (SecureAPI::strstr(info.dlpi_name, blacklistedName.c_str())) {
+                        blacklistedLibrary = true;
+                        break;
                     }
-                    LOGI("AntiLibPatch::AntiLibPatch this->m_checksums[%s][%s]: 0x%08X", info->dlpi_name, name, checksum);
-                    delete[] tmp;
+                }
+
+                if (!blacklistedLibrary) {
+                    for (int i = 0; i < info.dlpi_phnum; ++i) {
+                        const ElfW(Phdr) *phdr = &info.dlpi_phdr[i];
+                        if (phdr->p_type == PT_LOAD && (phdr->p_flags & PF_X) &&
+                            (phdr->p_flags & PF_R)) {
+                            ElfW(Addr) start = phdr->p_vaddr;
+                            ElfW(Addr) end   = start + phdr->p_memsz;
+
+                            auto     regionAddress = reinterpret_cast<const uint8_t *>(baseAddress +
+                                                                                       start);
+                            auto     regionSize    = end - start;
+                            uint32_t checksum      = crc32(regionAddress, regionSize);
+
+                            if (checksum != 0) {
+                                regions.emplace_back(info.dlpi_name,
+                                                     info.dlpi_addr,
+                                                     std::pair(start, end),
+                                                     checksum);
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        free(shstrtab);
-        SecureAPI::close(fd);
-        return 0;
-    }, &this->m_checksums);
+        soInfo = next;
+    }
 }
 
 const char *AntiLibPatch::getName() {
@@ -111,63 +106,21 @@ eSeverity AntiLibPatch::getSeverity() {
 bool AntiLibPatch::execute() {
     LOGI("AntiLibPatch::execute");
 
-    std::vector<dl_phdr_info> infos;
-    dl_iterate_phdr([](struct dl_phdr_info *info, size_t size, void *data) -> int {
-        ((std::vector<dl_phdr_info> *) data)->push_back(*info);
-        return 0;
-    }, &infos);
-
-    for (auto info : infos) {
-        if (!strstr(info.dlpi_name, AY_OBFUSCATE(".so")) || this->m_checksums.count(info.dlpi_name) == 0 || std::find(blacklists.begin(), blacklists.end(), get_filename(info.dlpi_name)) != blacklists.end()) {
-            continue;
-        }
-
-        LOGI("AntiLibPatch::execute info.dlpi_name: %s", info.dlpi_name);
-        int fd = SecureAPI::openat(AT_FDCWD, info.dlpi_name, O_RDONLY, 0);
-        if (fd == -1) {
-            continue;
-        }
-
-        Elf_Ehdr ehdr;
-        SecureAPI::read(fd, &ehdr, sizeof(Elf_Ehdr));
-
-        Elf_Shdr shdr;
-        SecureAPI::lseek(fd, ehdr.e_shoff + ehdr.e_shstrndx * sizeof(Elf_Shdr), SEEK_SET);
-        SecureAPI::read(fd, &shdr, sizeof(Elf_Shdr));
-
-        char *shstrtab = new char[shdr.sh_size];
-        SecureAPI::lseek(fd, shdr.sh_offset, SEEK_SET);
-        SecureAPI::read(fd, shstrtab, shdr.sh_size);
-
-        SecureAPI::lseek(fd, ehdr.e_shoff, SEEK_SET);
-        for (int i = 0; i < ehdr.e_shnum; i++) {
-            SecureAPI::read(fd, &shdr, sizeof(Elf_Shdr));
-            const char *name = shstrtab + shdr.sh_name;
-
-            if (shdr.sh_type == SHT_PROGBITS) {
-                if ((shdr.sh_flags & (SHF_EXECINSTR | SHF_ALLOC)) == (SHF_EXECINSTR | SHF_ALLOC)) {
-                    if (!SecureAPI::strcmp(name, AY_OBFUSCATE(".plt"))) {
-                        continue;
-                    }
-
-                    uint32_t checksum = crc32((uint8_t *) info.dlpi_addr + shdr.sh_addr, shdr.sh_size);
-                    LOGI("AntiLibPatch::execute %s[%s] checksum: 0x%08X -> 0x%08X", info.dlpi_name, name, this->m_checksums[info.dlpi_name][name], checksum);
-                    if ((checksum != 0x0 && this->m_checksums[info.dlpi_name][name]) && this->m_checksums[info.dlpi_name][name] != checksum) {
-                        LOGI("AntiLibPatch::execute %s[%s] checksum mismatch", info.dlpi_name, name);
-                        if (this->onLibTampered) {
-                            if (this->m_last_checksums.find(info.dlpi_name) == this->m_last_checksums.end() || this->m_last_checksums[info.dlpi_name][name] != checksum) {
-                                this->m_last_checksums[info.dlpi_name][name] = checksum;
-                                this->onLibTampered(info.dlpi_name, name, this->m_checksums[info.dlpi_name][name], checksum);
-                            }
-                        }
-                        return true;
-                    }
-                }
+    for (const auto &region: regions) {
+        auto     regionSize      = region.chunkData.second - region.chunkData.first;
+        auto     *regionAddress  = reinterpret_cast<uint8_t *>(region.baseAddress +
+                                                               region.chunkData.first);
+        uint32_t currentChecksum = crc32(regionAddress, regionSize);
+        if (currentChecksum != region.initialChecksum) {
+            if (this->onLibTampered) {
+                this->onLibTampered(region.libPath.c_str(),
+                                    region.initialChecksum,
+                                    currentChecksum);
             }
-        }
 
-        free(shstrtab);
-        SecureAPI::close(fd);
+            return true;
+        }
     }
+
     return false;
 }
